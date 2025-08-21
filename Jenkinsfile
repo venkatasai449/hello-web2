@@ -1,18 +1,13 @@
 pipeline {
   agent any
   options {
-    skipDefaultCheckout(true)
     timestamps()
+    skipDefaultCheckout(true)
   }
   environment {
-    // 🔁 CHANGE THIS to your App EC2 public IP
-    APP_HOST = "3.108.239.215"
-
-    // Don't block on first-time SSH
-    ANSIBLE_HOST_KEY_CHECKING = 'False'
-
-    // Jenkins key path used to SSH to the app node
-    SSH_KEY = "/var/lib/jenkins/.ssh/app.pem"
+    APP_HOST = "3.108.239.215"                 // <-- your App EC2 public IP
+    ANSIBLE_HOST_KEY_CHECKING = 'False'        // avoid first-time SSH prompt
+    SSH_KEY = "/var/lib/jenkins/.ssh/app.pem"  // private key Jenkins uses to SSH to app
   }
 
   stages {
@@ -20,16 +15,20 @@ pipeline {
     stage('Checkout') {
       steps {
         git branch: 'main', url: 'https://github.com/venkatasai449/hello-web.git'
-        sh 'echo "Workspace: $WORKSPACE" && ls -la'
+        sh '''
+          set -eux
+          echo "Workspace: $WORKSPACE"
+          ls -la
+        '''
       }
     }
 
     stage('Build with Maven') {
       steps {
         sh '''
-          set -euxo pipefail
+          set -eux
           mvn -B -DskipTests clean package
-          echo "Built artifacts in:"
+          echo "Built artifacts:"
           ls -l target/
         '''
       }
@@ -38,13 +37,13 @@ pipeline {
     stage('Prepare Ansible Files') {
       steps {
         sh '''
-          set -euxo pipefail
+          set -eux
 
-          # Ensure the SSH key exists & is readable by Jenkins
+          # Ensure SSH key exists & readable
           test -f "$SSH_KEY" || { echo "Missing SSH key at $SSH_KEY"; exit 1; }
           chmod 600 "$SSH_KEY" || true
 
-          # Pre-trust the app host (avoid interactive prompt)
+          # Pre-trust the app host to avoid interactive prompts
           mkdir -p ~/.ssh
           ssh-keyscan -H ${APP_HOST} >> ~/.ssh/known_hosts 2>/dev/null || true
 
@@ -53,18 +52,15 @@ pipeline {
           [app]
           app1 ansible_host=${APP_HOST} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY}
           EOF
-
           echo "----- inventory.ini -----"
           cat inventory.ini
 
-          # Playbook: Java + Tomcat + JAVA_HOME (systemd override) + WAR deploy + health checks
+          # Playbook: Install Java+Tomcat, set JAVA_HOME via systemd override, deploy WAR, health-check
           cat > deploy.yml <<EOF
           - hosts: app
             become: yes
             vars:
               java_home: /usr/lib/jvm/java-17-openjdk-amd64
-              local_war: "{{ lookup('env','WORKSPACE') }}/target/hello-web-1.0-SNAPSHOT.war"
-              remote_war: /var/lib/tomcat9/webapps/ROOT.war
             tasks:
               - name: Update apt cache
                 apt:
@@ -115,20 +111,10 @@ pipeline {
                   path: /var/lib/tomcat9/webapps/ROOT
                   state: absent
 
-              - name: Verify local WAR exists on controller
-                stat:
-                  path: "{{ local_war }}"
-                register: war_stat
-
-              - name: Fail if WAR missing
-                fail:
-                  msg: "WAR not found at {{ local_war }}. Check Maven build."
-                when: not war_stat.stat.exists
-
               - name: Copy WAR to app as ROOT.war
                 copy:
-                  src: "{{ local_war }}"
-                  dest: "{{ remote_war }}"
+                  src: target/hello-web-1.0-SNAPSHOT.war
+                  dest: /var/lib/tomcat9/webapps/ROOT.war
                   mode: '0644'
 
               - name: Restart Tomcat after deploy
@@ -150,8 +136,8 @@ pipeline {
                   status_code: 200
           EOF
 
-          echo "----- deploy.yml -----"
-          sed -n '1,200p' deploy.yml
+          echo "----- deploy.yml (first 120 lines) -----"
+          sed -n '1,120p' deploy.yml
         '''
       }
     }
@@ -159,8 +145,8 @@ pipeline {
     stage('Preflight: Ansible ping') {
       steps {
         sh '''
-          set -euxo pipefail
-          ansible -i inventory.ini app -m ping -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" -vv || { echo "Ansible ping failed"; exit 1; }
+          set -eux
+          ansible -i inventory.ini app -m ping -vv || { echo "Ansible ping failed"; exit 1; }
         '''
       }
     }
@@ -168,16 +154,16 @@ pipeline {
     stage('Deploy with Ansible') {
       steps {
         sh '''
-          set -euxo pipefail
+          set -eux
           ansible-playbook -i inventory.ini deploy.yml -vv
         '''
       }
     }
 
-    stage('Smoke test (from Jenkins)') {
+    stage('Smoke test from Jenkins') {
       steps {
         sh '''
-          set -euxo pipefail
+          set -eux
           curl -I "http://${APP_HOST}:8080/" | head -n1
         '''
       }
@@ -189,7 +175,8 @@ pipeline {
       echo "✅ Deployment successful! Open: http://${APP_HOST}:8080/"
     }
     failure {
-      echo "❌ Deployment failed. Scroll to the first 'fatal:' in the Ansible logs above for the exact reason."
+      echo "❌ Deployment failed. Check the first 'fatal:' in Ansible logs above."
     }
   }
 }
+
