@@ -1,14 +1,12 @@
 pipeline {
   agent any
   environment {
-    // 🔹 Replace with your App EC2 Public IP
     APP_HOST = "3.108.239.215"
   }
 
   stages {
     stage('Checkout') {
       steps {
-        // Explicit git checkout works in both Pipeline script and Pipeline from SCM
         git branch: 'main', url: 'https://github.com/venkatasai449/hello-web.git'
       }
     }
@@ -24,14 +22,14 @@ pipeline {
         sh '''
         set -eux
 
-        # 🔹 Create inventory file for Ansible
+        # Create inventory
         cat > inventory.ini <<EOF
         [app]
         app1 ansible_host=${APP_HOST} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/app.pem
         EOF
 
-        # 🔹 Create Ansible playbook
-        cat > deploy.yml <<'EOF'
+        # Create playbook
+        cat > deploy.yml <<EOF
         - hosts: app
           become: yes
           tasks:
@@ -45,7 +43,7 @@ pipeline {
 
             - name: Copy WAR as ROOT.war
               copy:
-                src: target/hello.war
+                src: target/hello-web-1.0-SNAPSHOT.war
                 dest: /var/lib/tomcat9/webapps/ROOT.war
                 mode: '0644'
 
@@ -55,7 +53,7 @@ pipeline {
                 state: restarted
         EOF
 
-        # 🔹 Run Ansible playbook
+        # Run playbook
         ansible-playbook -i inventory.ini deploy.yml
         '''
       }
@@ -64,10 +62,10 @@ pipeline {
 
   post {
     success {
-      echo "✅ Deployment successful! Access the app at: http://${APP_HOST}:8080/"
+      echo "✅ Deployment successful! Access: http://${APP_HOST}:8080/"
     }
     failure {
-      echo "❌ Build or deployment failed. Check console logs."
+      echo "❌ Deployment failed. Check console logs."
     }
   }
 }
