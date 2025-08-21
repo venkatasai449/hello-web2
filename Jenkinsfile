@@ -1,45 +1,50 @@
 pipeline {
   agent any
   environment {
-    APP_HOST = "3.108.239.215"
+    APP_HOST = "3.108.239.215"   // <-- replace with your App EC2 public IP
   }
-
   stages {
     stage('Checkout') {
       steps {
-        git branch: 'main', url: 'https://github.com/venkatasai449/hello-web.git'
+        checkout scm
       }
     }
-
     stage('Build with Maven') {
       steps {
         sh 'mvn -B -DskipTests clean package'
       }
     }
-
     stage('Deploy with Ansible') {
       steps {
         sh '''
         set -eux
 
-        # Create inventory
+        # Create Ansible inventory
         cat > inventory.ini <<EOF
         [app]
         app1 ansible_host=${APP_HOST} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/app.pem
         EOF
 
-        # Create playbook
-        cat > deploy.yml <<EOF
+        # Create Ansible playbook
+        cat > deploy.yml <<'EOF'
         - hosts: app
           become: yes
           tasks:
-            - name: Install Tomcat 9
+            - name: Install Java + Tomcat
               apt:
                 name:
+                  - openjdk-17-jdk
                   - tomcat9
                   - tomcat9-admin
                 state: present
                 update_cache: yes
+
+            - name: Set JAVA_HOME for Tomcat
+              lineinfile:
+                path: /etc/default/tomcat9
+                regexp: '^JAVA_HOME='
+                line: 'JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64'
+                create: yes
 
             - name: Copy WAR as ROOT.war
               copy:
@@ -53,19 +58,18 @@ pipeline {
                 state: restarted
         EOF
 
-        # Run playbook
-        ansible-playbook -i inventory.ini deploy.yml
+        # Run Ansible playbook
+        ansible-playbook -i inventory.ini deploy.yml -vvv
         '''
       }
     }
   }
-
   post {
     success {
-      echo "✅ Deployment successful! Access: http://${APP_HOST}:8080/"
+      echo "✅ Deployment successful! Access the app at: http://${APP_HOST}:8080/"
     }
     failure {
-      echo "❌ Deployment failed. Check console logs."
+      echo "❌ Deployment failed! Check Jenkins console logs."
     }
   }
 }
