@@ -3,7 +3,7 @@ pipeline {
   options { timestamps(); skipDefaultCheckout(true) }
 
   environment {
-    APP_HOST = "3.108.239.215"                 // <-- change to your App EC2 public IP
+    APP_HOST = "54.198.173.58"                 // <-- change to your App EC2 public IP
     SSH_KEY  = "/var/lib/jenkins/.ssh/app.pem" // key Jenkins uses to SSH to App EC2
   }
 
